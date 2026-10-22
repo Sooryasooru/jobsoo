@@ -1,5 +1,5 @@
 """API routers."""
 
-from app.api.routes import health  # noqa: DOC201, I001
+from app.api.routes import health, jobs  # noqa: F401
 
-__all__ = ["health"]
+__all__ = ["health", "jobs"]
