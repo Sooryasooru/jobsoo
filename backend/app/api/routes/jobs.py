@@ -17,6 +17,7 @@ from app.connectors.registry import get_connector
 from app.db.session import get_session
 from app.models import Job
 from app.schemas.jobs import IngestionSourceStats, IngestResult, JobListingResponse
+from app.scoring.evidence import build_evidence_report
 from app.services.ingestion import ingest_many, run_ingestion
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -134,6 +135,72 @@ def ingest_jobs(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     jobs = list(connector.iterate_jobs(max_pages=max_pages, page_size=page_size))
     return run_ingestion(db, jobs)
+
+
+@router.post("/{job_id}/requirements/extract")
+def extract_requirements(
+    job_id: str,
+    force: bool = Query(default=False),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Extract structured requirements for a job via Claude (validated)."""
+    from app.ai.requirements import extract_requirements_for_job
+    from app.scoring.evidence import build_evidence_report
+    from app.services.users import get_or_create_dev_user
+
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    try:
+        extraction, from_cache = extract_requirements_for_job(db, job, force=force)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=f"AI unavailable: {exc}") from exc
+    user = get_or_create_dev_user(db)
+    evidence_report = build_evidence_report(user, extraction)
+    return {
+        "job_id": str(job.id),
+        "from_cache": from_cache,
+        "extraction": extraction.model_dump(mode="json"),
+        "evidence_report": evidence_report,
+    }
+
+
+@router.get("/{job_id}/requirements")
+def list_requirements(job_id: str, db: Session = Depends(get_session)) -> list[dict[str, Any]]:
+    """List stored requirement rows for a job."""
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return [
+        {
+            "id": str(req.id),
+            "category": req.category,
+            "text": req.text,
+            "is_required": req.is_required,
+            "is_hard_blocker": req.is_hard_blocker,
+            "min_years": float(req.min_years) if req.min_years is not None else None,
+            "extraction_meta": req.extraction_meta,
+        }
+        for req in job.requirements
+    ]
+
+
+@router.post("/{job_id}/evidence")
+def map_evidence(job_id: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Match a job's stored requirements against the candidate profile."""
+    from app.ai.requirements import _payload_from_rows
+    from app.services.users import get_or_create_dev_user
+
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if not job.requirements:
+        raise HTTPException(status_code=400, detail="extract requirements first")
+    payload = _payload_from_rows(job, job.requirements)
+    user = get_or_create_dev_user(db)
+    return build_evidence_report(user, payload)
 
 
 @router.post("/import")

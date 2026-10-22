@@ -14,6 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.api.routes import health
+from app.api.routes.cvs import router as cvs_router
+from app.api.routes.cvs import router_profiles as profile_router
 from app.api.routes.jobs import router as jobs_router
 from app.config import get_settings
 from app.logging import configure_logging, get_logger
@@ -55,3 +57,5 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(jobs_router)
+app.include_router(cvs_router)
+app.include_router(profile_router)
