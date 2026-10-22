@@ -17,6 +17,7 @@ os.environ.setdefault(
 os.environ.setdefault("DATABASE_URL", os.environ["JOBSOO_TEST_DATABASE_URL"])
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
@@ -44,6 +45,9 @@ def db(engine: Engine) -> Engine:
     """Provide an engine after resetting all tables for isolation."""
     from app.db.base import Base
 
+    with engine.connect() as conn:
+        conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        conn.commit()
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     yield engine
