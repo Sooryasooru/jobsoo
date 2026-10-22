@@ -1,0 +1,23 @@
+# PostgreSQL for local development when no host Postgres is available.
+# Start with: docker compose up -d
+# Then set in .env: DATABASE_URL=postgresql+psycopg://jobsoo:jobsoo@localhost:5433/jobsoo_dev
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: jobsoo
+      POSTGRES_PASSWORD: jobsoo
+      POSTGRES_DB: jobsoo_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - jobsoo_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobsoo -d jobsoo_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  jobsoo_pgdata:
