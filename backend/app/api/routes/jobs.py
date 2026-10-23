@@ -15,12 +15,34 @@ from sqlalchemy.orm import Session
 from app.connectors.base import ConnectorError
 from app.connectors.registry import get_connector
 from app.db.session import get_session
-from app.models import Job
+from app.models import Job, JobMatch
 from app.schemas.jobs import IngestionSourceStats, IngestResult, JobListingResponse
-from app.scoring.evidence import build_evidence_report
+from app.scoring.score import SCORING_RULES, SCORING_RULES_VERSION, upsert_match
 from app.services.ingestion import ingest_many, run_ingestion
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+def _match_to_payload(match: JobMatch) -> dict[str, Any]:
+    """Serialize a stored JobMatch row for the API."""
+    return {
+        "job_id": str(match.job_id),
+        "user_id": str(match.user_id),
+        "score": match.score,
+        "tier": match.tier,
+        "recommendation": match.recommendation,
+        "explanation": match.explanation,
+        "score_components": match.score_components,
+        "matched_skills": match.matched_skills,
+        "missing_skills": match.missing_skills,
+        "unknown_skills": match.unknown_skills,
+        "evidence": match.evidence,
+        "hard_blocker_warnings": match.hard_blocker_warnings,
+        "unknown_requirements": match.unknown_requirements,
+        "experience_gap_years": match.experience_gap_years,
+        "scoring_rules_version": match.scoring_rules_version,
+        "computed_at": match.computed_at,
+    }
 
 
 def _to_response(job: Job) -> JobListingResponse:
@@ -200,7 +222,75 @@ def map_evidence(job_id: str, db: Session = Depends(get_session)) -> dict[str, A
         raise HTTPException(status_code=400, detail="extract requirements first")
     payload = _payload_from_rows(job, job.requirements)
     user = get_or_create_dev_user(db)
+    from app.scoring.evidence import build_evidence_report
+
     return build_evidence_report(user, payload)
+
+
+@router.post("/{job_id}/match")
+def compute_match(job_id: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Compute (or recompute) the deterministic match score for a job."""
+    from app.services.users import get_or_create_dev_user
+
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    user = get_or_create_dev_user(db)
+    match = upsert_match(db, user, job)
+    return _match_to_payload(match)
+
+
+@router.get("/{job_id}/match")
+def get_match(job_id: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Return the stored match for a job without recomputing."""
+    from sqlalchemy import select
+
+    from app.models import JobMatch
+    from app.services.users import get_or_create_dev_user
+
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    user = get_or_create_dev_user(db)
+    match = db.execute(
+        select(JobMatch).where(JobMatch.user_id == user.id, JobMatch.job_id == job.id)
+    ).scalar_one_or_none()
+    if match is None:
+        raise HTTPException(status_code=404, detail="match not computed yet")
+    return _match_to_payload(match)
+
+
+@router.get("/matches/all")
+def list_matches(db: Session = Depends(get_session)) -> list[dict[str, Any]]:
+    """List all stored matches for the user, sorted by score (all tiers shown)."""
+    from sqlalchemy import select
+
+    from app.models import Job, JobMatch
+    from app.services.users import get_or_create_dev_user
+
+    user = get_or_create_dev_user(db)
+    rows = (
+        db.execute(
+            select(JobMatch).where(JobMatch.user_id == user.id).order_by(JobMatch.score.desc())
+        )
+        .scalars()
+        .all()
+    )
+    payloads = []
+    for match in rows:
+        job = db.get(Job, match.job_id)
+        payload = _match_to_payload(match)
+        payload["job_title"] = job.title if job else None
+        payload["job_company"] = job.company if job else None
+        payload["job_location"] = job.location if job else None
+        payloads.append(payload)
+    return payloads
+
+
+@router.get("/scoring/rules", response_model=None)
+def get_scoring_rules() -> dict[str, Any]:
+    """Expose the scoring formula and configured weights (documentation)."""
+    return {"version": SCORING_RULES_VERSION, "rules": SCORING_RULES}
 
 
 @router.post("/import")
