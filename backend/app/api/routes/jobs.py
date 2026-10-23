@@ -296,7 +296,15 @@ def get_scoring_rules() -> dict[str, Any]:
 @router.post("/import")
 def import_jobs(jobs: list[dict[str, Any]], db: Session = Depends(get_session)) -> IngestResult:
     """Import pre-normalized job dicts (manual sources; validates via schema)."""
+    from pydantic import ValidationError
+
     from app.schemas.jobs import NormalizedJob
 
-    normalized = [NormalizedJob.model_validate(j) for j in jobs]
+    try:
+        normalized = [NormalizedJob.model_validate(j) for j in jobs]
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="invalid job payload: " + exc.errors()[0]["msg"],
+        ) from exc
     return ingest_many(db, normalized)

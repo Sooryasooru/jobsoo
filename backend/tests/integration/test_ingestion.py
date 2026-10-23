@@ -161,6 +161,16 @@ def test_api_list_get_and_import(api: TestClient) -> None:
     assert api.get("/jobs/nonexistent").status_code == 404
 
 
+def test_api_import_invalid_payload_is_422(api: TestClient) -> None:
+    """Malformed import data gets a client validation error, not a 500."""
+    resp = api.post(
+        "/jobs/import",
+        json=[{"source": "manual", "source_job_id": "bad", "title": "No URL required"}],
+    )
+    assert resp.status_code == 422
+    assert "invalid job payload" in resp.json()["detail"]
+
+
 def test_api_stats(api: TestClient) -> None:
     api.post("/jobs/import", json=[normalized().model_dump(mode="json")])
     stats = api.get("/jobs/stats")

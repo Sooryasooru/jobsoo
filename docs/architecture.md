@@ -53,7 +53,7 @@ React dashboard ──▶ FastAPI API ──▶ services ──▶ SQLAlchemy mo
 
 ## Verification (2026-10-23)
 
-- `pytest`: 91 passed (unit + API + PostgreSQL integration), 87% line coverage on `app`.
+- `pytest`: 92 passed (unit + API + PostgreSQL integration), 87% line coverage on `app`.
 - `ruff check` / `ruff format --check`: clean. `mypy --strict` (`app` + `tests`): clean.
 - `alembic upgrade head` on an empty database creates all 9 application tables.
 - End-to-end exercised against the running API + dashboard: CV upload/parse,
@@ -62,3 +62,6 @@ React dashboard ──▶ FastAPI API ──▶ services ──▶ SQLAlchemy mo
   mocked-LLM tests and degrade gracefully (explicit "AI unavailable" responses,
   deterministic tailoring fallback) but were not exercised against the live
   Anthropic API — no API key was configured.
+
+Phase 2 close-out measurement and integration readiness: see
+[phase2-readiness.md](phase2-readiness.md).
