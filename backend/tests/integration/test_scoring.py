@@ -48,7 +48,7 @@ def make_job(session: Session, requirements: list[dict[str, object]]) -> Job:
     session.add(job)
     session.flush()
     for req in requirements:
-        session.add(JobRequirement(job_id=job.id, **req))  # type: ignore[arg-type]
+        session.add(JobRequirement(job_id=job.id, **req))
     session.commit()
     return job
 

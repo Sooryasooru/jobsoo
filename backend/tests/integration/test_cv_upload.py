@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.engine import Engine
 
 from app.db.session import set_engine, set_session_factory
 from app.main import app
@@ -29,7 +30,7 @@ BSc Computer Science, Tech University, 2020
 
 
 @pytest.fixture
-def client(db) -> TestClient:
+def client(db: Engine) -> TestClient:
     """API client wired to the test database."""
     set_engine(db)
     set_session_factory(None)

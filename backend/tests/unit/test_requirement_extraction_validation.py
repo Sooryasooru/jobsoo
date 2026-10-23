@@ -111,8 +111,8 @@ def test_extract_wraps_description_in_untrusted_markers(monkeypatch: pytest.Monk
     session = MagicMock()
     extraction, was_cached = requirements_module.extract_requirements_for_job(
         session,
-        FakeJob(),
-        force=True,  # type: ignore[arg-type]
+        FakeJob(),  # type: ignore[arg-type]
+        force=True,
     )
     assert was_cached is False
     assert "<job_description>" in captured["user"]

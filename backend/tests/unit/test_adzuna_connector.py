@@ -45,7 +45,7 @@ def httpx_response(
     response.status_code = status_code
     response.headers = headers or {}
     response.text = "<body>"
-    response.json = lambda: json_data  # type: ignore[method-assign]
+    response.json = lambda: json_data
     return response
 
 

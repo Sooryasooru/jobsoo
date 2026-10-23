@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
 from app.models.enums import EvidenceStatus
 from app.schemas.requirements import ExtractedRequirementItem, ExtractedRequirements
@@ -12,7 +13,9 @@ from app.scoring.evidence import build_evidence_report, map_experience_requireme
 class FakeProfile:
     """Minimal stand-in for UserProfile (avoids DB in unit tests)."""
 
-    def __init__(self, skills: list[str], years: Decimal | None, projects: list[dict]) -> None:
+    def __init__(
+        self, skills: list[str], years: Decimal | None, projects: list[dict[str, Any]]
+    ) -> None:
         self.skills = skills
         self.professional_experience_years = years
         self.projects = projects
@@ -75,6 +78,6 @@ def test_build_evidence_report_flags_unknown_work_authorization() -> None:
         required_skills=[ExtractedRequirementItem(text="Python")],
         unknown_fields=["remote_policy"],
     )
-    report = build_evidence_report(FakeUser(FakeProfile(["Python"], Decimal(1), [])), extraction)
+    report = build_evidence_report(FakeUser(FakeProfile(["Python"], Decimal(1), [])), extraction)  # type: ignore[arg-type]
     assert "work_authorization" in report["unknown_fields"]
     assert any(e["status"] == EvidenceStatus.SUPPORTED.value for e in report["evidence"])

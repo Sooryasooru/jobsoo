@@ -10,6 +10,7 @@ database is reachable, so pure-unit tests always run anywhere.
 from __future__ import annotations
 
 import os
+from collections.abc import Generator
 
 os.environ.setdefault(
     "JOBSOO_TEST_DATABASE_URL", "postgresql+psycopg://soorya@/jobsoo_test?host=/var/run/postgresql"
@@ -41,7 +42,7 @@ def engine(db_url: str) -> Engine:
 
 
 @pytest.fixture
-def db(engine: Engine) -> Engine:
+def db(engine: Engine) -> Generator[Engine, None, None]:
     """Provide an engine after resetting all tables for isolation."""
     from app.db.base import Base
 

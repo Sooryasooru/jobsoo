@@ -8,8 +8,8 @@ from pydantic import ValidationError
 from app.schemas.jobs import NormalizedJob, canonicalize_url, normalize_company_name
 
 
-def sample_job(**overrides: object) -> dict:
-    data = {
+def sample_job(**overrides: object) -> dict[str, object]:
+    data: dict[str, object] = {
         "source": "adzuna",
         "source_job_id": "123",
         "title": "Backend Engineer",

@@ -17,7 +17,7 @@ pytestmark = pytest.mark.integration
 
 
 def normalized(**overrides: object) -> NormalizedJob:
-    data = {
+    data: dict[str, object] = {
         "source": "adzuna",
         "source_job_id": "100",
         "title": "Backend Engineer",
@@ -112,7 +112,7 @@ def test_distinct_jobs_not_flagged(db: Engine) -> None:
             ],
         )
         assert other.inserted == 1
-        job = session.query(Job).order_by(Job.source_job_id).first()  # type: ignore[union-attr]
+        job = session.query(Job).order_by(Job.source_job_id).first()
         assert job is not None and job.duplicate_flags == []
 
 

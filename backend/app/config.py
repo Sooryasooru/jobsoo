@@ -44,6 +44,7 @@ class Settings(BaseSettings):
 
     # Uploads
     cv_upload_dir: Path = Path("./data/uploads")
+    tailored_pdf_dir: Path = Path("./data/exports")
     max_cv_upload_mb: int = 10
     allowed_cv_extensions: set[str] = {".pdf", ".docx", ".md", ".txt"}
 
