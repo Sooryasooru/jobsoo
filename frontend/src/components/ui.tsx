@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import type { Tier } from "../types";
 
 const TIER_STYLES: Record<Tier, string> = {
@@ -35,9 +35,16 @@ export function Chip({ children, tone = "slate" }: { children: ReactNode; tone?:
   return <span className={`inline-block rounded px-2 py-0.5 text-xs ${styles}`}>{children}</span>;
 }
 
-export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
+export function Card({
+  children,
+  className = "",
+  ...rest
+}: { children: ReactNode; className?: string } & HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={`rounded-lg border border-slate-200 bg-white p-4 shadow-sm ${className}`}>
+    <div
+      className={`rounded-lg border border-slate-200 bg-white p-4 shadow-sm ${className}`}
+      {...rest}
+    >
       {children}
     </div>
   );

@@ -21,7 +21,8 @@ React dashboard ──▶ FastAPI API ──▶ services ──▶ SQLAlchemy mo
 | Module                | Responsibility                                                            |
 | --------------------- | ------------------------------------------------------------------------- |
 | `app/api/routes/`     | HTTP routes only: validation in, Pydantic out. No business logic.          |
-| `app/services/`       | Business logic (ingestion pipelines, CV uploads, approval workflow).        |
+| `app/services/`       | Business logic (ingestion pipelines, CV uploads, approval workflow, application tracking). |
+| `app/api/routes/applications.py` | Application lifecycle: server-validated transitions (see docs/decisions/0001), one-transaction event history, explicit "I applied" confirmation, availability rechecks. |
 | `app/db/`             | Declarative base, engine/session factory, dependency injection.            |
 | `app/models/`         | SQLAlchemy 2.x ORM models — the single source of truth for persistence.    |
 | `app/schemas/`        | Pydantic request/response schemas and AI structured-output schemas.        |
