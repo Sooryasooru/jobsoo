@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
+from typing import TYPE_CHECKING
 
 os.environ.setdefault(
     "JOBSOO_TEST_DATABASE_URL", "postgresql+psycopg://soorya@/jobsoo_test?host=/var/run/postgresql"
@@ -21,6 +22,11 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from fastapi.testclient import TestClient
 
 
 @pytest.fixture(scope="session")
@@ -53,3 +59,40 @@ def db(engine: Engine) -> Generator[Engine, None, None]:
     Base.metadata.create_all(engine)
     yield engine
     Base.metadata.drop_all(engine)
+
+
+@pytest.fixture
+def _api_identity(db: Engine) -> dict[str, str]:
+    """Register a fresh user per test; returns token/id/email for API fixtures."""
+    import uuid
+
+    from sqlalchemy.orm import Session as OrmSession
+
+    from app.db.session import set_engine, set_session_factory
+    from app.services import auth
+
+    set_engine(db)
+    set_session_factory(None)
+    email = f"api-{uuid.uuid4().hex[:10]}@example.com"
+    with OrmSession(db) as session:
+        user, token = auth.register_user(
+            session, email=email, password="test-password-1", display_name="API User"
+        )
+        user_id = user.id
+    return {"token": token, "user_id": user_id, "email": email}
+
+
+@pytest.fixture
+def api(_api_identity: dict[str, str]) -> TestClient:
+    """Authorized TestClient acting as the per-test registered user."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    return TestClient(app, headers={"Authorization": f"Bearer {_api_identity['token']}"})
+
+
+@pytest.fixture
+def api_user(_api_identity: dict[str, str]) -> str:
+    """Email of the user behind the `api` client fixture."""
+    return _api_identity["email"]

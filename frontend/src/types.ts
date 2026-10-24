@@ -2,6 +2,12 @@
 
 export type Tier = "strong" | "good" | "stretch" | "long_shot";
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  display_name: string;
+}
+
 export type ApplicationStatus =
   | "queued"
   | "prepared"

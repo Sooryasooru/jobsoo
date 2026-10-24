@@ -7,11 +7,11 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.deps import CurrentAuthenticatedUser
 from app.db.session import get_session
 from app.models import Resume, User
 from app.schemas.resumes import ProfileResponse, ProfileUpdate, ResumeResponse
 from app.services.resumes import CVUploadError, upload_resume
-from app.services.users import get_or_create_dev_user
 
 logger = structlog.get_logger(__name__)
 
@@ -34,9 +34,10 @@ def _resume_response(resume: Resume) -> ResumeResponse:
 
 
 @router.post("", response_model=ResumeResponse)
-def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_session)) -> ResumeResponse:
+def upload_cv(
+    user: CurrentAuthenticatedUser, file: UploadFile = File(...), db: Session = Depends(get_session)
+) -> ResumeResponse:
     """Upload one original CV (pdf/docx/md/txt). Originals are immutable."""
-    user = get_or_create_dev_user(db)
     try:
         if file.filename is None:
             raise CVUploadError("file name is required")
@@ -51,9 +52,10 @@ def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_session)) 
 
 
 @router.get("", response_model=list[ResumeResponse])
-def list_cvs(db: Session = Depends(get_session)) -> list[ResumeResponse]:
+def list_cvs(
+    user: CurrentAuthenticatedUser, db: Session = Depends(get_session)
+) -> list[ResumeResponse]:
     """List the user's original CVs."""
-    user = get_or_create_dev_user(db)
     rows = (
         db.execute(
             select(Resume).where(Resume.user_id == user.id).order_by(Resume.created_at.desc())
@@ -65,9 +67,10 @@ def list_cvs(db: Session = Depends(get_session)) -> list[ResumeResponse]:
 
 
 @router.get("/{resume_id}", response_model=ResumeResponse)
-def get_cv(resume_id: str, db: Session = Depends(get_session)) -> ResumeResponse:
+def get_cv(
+    resume_id: str, user: CurrentAuthenticatedUser, db: Session = Depends(get_session)
+) -> ResumeResponse:
     """Fetch one CV's parsed content by id."""
-    user = get_or_create_dev_user(db)
     try:
         resume = db.get(Resume, resume_id)
     except (ValueError, TypeError):
@@ -99,16 +102,16 @@ def _profile_response(user: User) -> ProfileResponse:
 
 
 @router_profiles.get("", response_model=ProfileResponse)
-def get_profile(db: Session = Depends(get_session)) -> ProfileResponse:
+def get_profile(user: CurrentAuthenticatedUser) -> ProfileResponse:
     """Return the prototype user's profile."""
-    user = get_or_create_dev_user(db)
     return _profile_response(user)
 
 
 @router_profiles.put("", response_model=ProfileResponse)
-def update_profile(payload: ProfileUpdate, db: Session = Depends(get_session)) -> ProfileResponse:
+def update_profile(
+    payload: ProfileUpdate, user: CurrentAuthenticatedUser, db: Session = Depends(get_session)
+) -> ProfileResponse:
     """Update editable profile fields."""
-    user = get_or_create_dev_user(db)
     profile = user.user_profile
     if profile is None:
         raise HTTPException(status_code=500, detail="user profile is missing")

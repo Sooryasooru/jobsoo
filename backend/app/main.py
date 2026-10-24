@@ -9,11 +9,12 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api.routes import health
+from app.api.deps import get_current_user
+from app.api.routes import auth, health
 from app.api.routes.applications import router as applications_router
 from app.api.routes.cvs import router as cvs_router
 from app.api.routes.cvs import router_profiles as profile_router
@@ -44,8 +45,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Local prototype: allow the Vite dev server origins. Auth is deferred and
-# documented in docs/security.md - do not expose this instance publicly.
+# Local prototype: allow the Vite dev server origins. Auth uses bearer tokens
+# (see docs/security.md) - do not expose this instance publicly.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -57,9 +58,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Public: health and the auth endpoints themselves.
 app.include_router(health.router)
-app.include_router(jobs_router)
-app.include_router(applications_router)
-app.include_router(cvs_router)
-app.include_router(profile_router)
-app.include_router(tailored_router)
+app.include_router(auth.router)
+
+# Everything else requires an authenticated session - enforced at include time
+# so a future route cannot silently skip the check.
+app.include_router(jobs_router, dependencies=[Depends(get_current_user)])
+app.include_router(applications_router, dependencies=[Depends(get_current_user)])
+app.include_router(cvs_router, dependencies=[Depends(get_current_user)])
+app.include_router(profile_router, dependencies=[Depends(get_current_user)])
+app.include_router(tailored_router, dependencies=[Depends(get_current_user)])

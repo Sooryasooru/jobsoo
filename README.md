@@ -42,6 +42,15 @@ Environment variables (all optional in dev, see `backend/app/config.py`):
 Without the AI key the app still works: extraction is refused with a clear
 message and CV tailoring uses the deterministic (no-rewriting) fallback.
 
+### Accounts (Phase 2.3)
+
+The backend and dashboard require sign-in. Register at `http://localhost:5173`
+(first visit shows the register/login screen) — accounts are locally-scoped,
+per-user workspaces: CVs, profiles, tailored CVs, applications and their event
+timelines are isolated per account, while job listings stay shared. Existing
+Phase 1 development users keep their data but have no password; register a new
+account for use. See [docs/security.md](docs/security.md) for the full model.
+
 ### Frontend
 
 ```bash
@@ -54,7 +63,7 @@ npm run dev        # http://localhost:5173 (CORS-allowed against the API)
 
 ```bash
 cd backend
-.venv/bin/pytest --cov=app         # 91 tests; integration tests need Postgres (JOBSOO_TEST_DATABASE_URL)
+.venv/bin/pytest --cov=app         # 154 tests; integration tests need Postgres (JOBSOO_TEST_DATABASE_URL)
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 .venv/bin/mypy app tests
 ```

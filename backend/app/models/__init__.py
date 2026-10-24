@@ -16,7 +16,7 @@ from app.models.job import Job, JobRequirement
 from app.models.match import JobMatch
 from app.models.mixins import CreatedAtMixin, CreatedUpdatedAtMixin, str_uuid
 from app.models.resume import Resume, TailoredResume
-from app.models.user import User, UserProfile
+from app.models.user import User, UserProfile, UserSession
 
 __all__ = [
     "Application",
@@ -38,6 +38,7 @@ __all__ = [
     "ResumeKind",
     "TailoredResume",
     "User",
+    "UserSession",
     "UserProfile",
     "str_uuid",
 ]

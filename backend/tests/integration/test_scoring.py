@@ -6,11 +6,10 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from app.db.session import set_engine, set_session_factory
-from app.main import app
 from app.models import Job, JobRequirement, User, UserProfile
 from app.models.enums import Recommendation
 from app.scoring.score import score_job_against_profile, upsert_match
@@ -80,13 +79,6 @@ PREFERRED_K8S = {
 EXP_ROW = {"category": "experience", "text": "5+ years backend", "min_years": 5.0}
 
 
-@pytest.fixture
-def api(db: Engine) -> TestClient:
-    set_engine(db)
-    set_session_factory(None)
-    return TestClient(app)
-
-
 def test_strong_match_when_skills_covered_and_experience_meets(
     db: Engine,
 ) -> None:
@@ -148,11 +140,11 @@ def test_upsert_match_is_idempotent(db: Engine) -> None:
         assert rows == 1
 
 
-def test_match_api_roundtrip(api: TestClient, db: Engine) -> None:
-    from app.services.users import get_or_create_dev_user
+def test_match_api_roundtrip(api: TestClient, db: Engine, api_user: str) -> None:
+    from app.models import User as UserModel
 
     with Session(db) as session:
-        user = get_or_create_dev_user(session)
+        user = session.execute(select(UserModel).where(UserModel.email == api_user)).scalar_one()
         profile = user.user_profile
         assert profile is not None
         profile.skills = ["Python", "SQL"]

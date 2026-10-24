@@ -7,8 +7,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from app.db.session import set_engine, set_session_factory
-from app.main import app
 from app.models import Job
 from app.schemas.jobs import NormalizedJob
 from app.services.ingestion import run_ingestion
@@ -30,14 +28,6 @@ def normalized(**overrides: object) -> NormalizedJob:
     }
     data.update(overrides)
     return NormalizedJob.model_validate(data)
-
-
-@pytest.fixture
-def api(db: Engine) -> TestClient:
-    """API client wired to the test database with tables created."""
-    set_engine(db)
-    set_session_factory(None)
-    return TestClient(app)
 
 
 def test_ingest_inserts_then_reconciles_same_source(db: Engine) -> None:

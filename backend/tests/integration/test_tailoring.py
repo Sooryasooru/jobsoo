@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from app.db.session import set_engine, set_session_factory
-from app.main import app
 from app.models import Job, JobRequirement, Resume, User, UserProfile
 from app.services.tailoring import (
     TailoringError,
@@ -22,20 +21,15 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def api(db: Engine) -> TestClient:
-    set_engine(db)
-    set_session_factory(None)
-    return TestClient(app)
-
-
-@pytest.fixture
-def workflow_data(db: Engine) -> dict[str, str]:
-    """Persist a dev user, an original resume, and a job with requirements."""
+def workflow_data(db: Engine, api_user: str) -> dict[str, str]:
+    """Persist the API user, an original resume, and a job with requirements."""
     with Session(db) as session:
-        user = User(email="dev@example.com", display_name="Dev")
-        session.add(user)
-        session.flush()
-        session.add(UserProfile(user_id=user.id, skills=["Python", "SQL", "Docker"]))
+        user = session.execute(select(User).where(User.email == api_user)).scalar_one()
+        assert user is not None
+        if user.user_profile is None:
+            from app.models import UserSession  # noqa: F401  (keep models loaded)
+
+            session.add(UserProfile(user_id=user.id, skills=["Python", "SQL", "Docker"]))
         resume = Resume(
             user_id=user.id,
             kind="original",
