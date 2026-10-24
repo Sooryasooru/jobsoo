@@ -56,7 +56,7 @@ class Application(Base, CreatedUpdatedAtMixin):
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="prepared")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    submitted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     events: Mapped[list[ApplicationEvent]] = relationship(
         back_populates="application", cascade="all, delete-orphan"

@@ -39,3 +39,7 @@ backend/data/uploads/
 .vscode/
 .idea/
 *.swp
+
+# Never commit local SSH keys
+/jobsoo
+/jobsoo.pub

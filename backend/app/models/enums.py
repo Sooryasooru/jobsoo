@@ -74,13 +74,22 @@ class ResumeKind(StrEnum):
 
 
 class ApplicationStatus(StrEnum):
-    """Application status (kept separate from job availability)."""
+    """Application status (kept separate from job availability).
 
+    `prepared` is the "ready to apply" state (kept for Phase 1 compatibility);
+    `queued` means created but not yet prepared. Terminal states are rejected,
+    withdrawn and closed. Valid transitions are enforced by
+    `app.services.applications.TRANSITIONS`.
+    """
+
+    QUEUED = "queued"
     PREPARED = "prepared"
     SUBMITTED = "submitted"
-    REJECTED = "rejected"
     INTERVIEWING = "interviewing"
+    ASSESSMENT = "assessment"
+    REJECTED = "rejected"
     OFFER = "offer"
+    WITHDRAWN = "withdrawn"
     CLOSED = "closed"
 
 

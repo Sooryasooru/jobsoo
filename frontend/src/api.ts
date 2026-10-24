@@ -1,5 +1,13 @@
 // Hand-rolled typed client. The backend CORS default allows this dev origin.
 
+import type {
+  ApplicationEventRow,
+  ApplicationRow,
+  ApplicationStatus,
+  ApplicationsBoard,
+  AvailabilityInfo,
+} from "./types";
+
 export const API_BASE: string =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? "http://127.0.0.1:8000";
 
@@ -51,4 +59,24 @@ export const api = {
       body: form,
     });
   },
+};
+
+export const applicationsApi = {
+  board: () => api.get<ApplicationsBoard>("/applications"),
+  get: (id: string) => api.get<ApplicationRow>(`/applications/${id}`),
+  create: (jobId: string, tailoredResumeId?: string) =>
+    api.post<ApplicationRow>("/applications", {
+      job_id: jobId,
+      ...(tailoredResumeId ? { tailored_resume_id: tailoredResumeId } : {}),
+    }),
+  events: (id: string) =>
+    api.get<ApplicationEventRow[]>(`/applications/${id}/events`),
+  setStatus: (id: string, status: ApplicationStatus, notes?: string) =>
+    api.post<ApplicationRow>(`/applications/${id}/status`, { status, notes: notes ?? null }),
+  confirmSubmit: (id: string, externalRef?: string) =>
+    api.post<ApplicationRow>(`/applications/${id}/confirm-submit`, {
+      external_ref: externalRef ?? null,
+    }),
+  availability: (id: string) =>
+    api.get<AvailabilityInfo>(`/applications/${id}/availability`),
 };

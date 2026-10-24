@@ -2,6 +2,53 @@
 
 export type Tier = "strong" | "good" | "stretch" | "long_shot";
 
+export type ApplicationStatus =
+  | "queued"
+  | "prepared"
+  | "submitted"
+  | "interviewing"
+  | "assessment"
+  | "rejected"
+  | "offer"
+  | "withdrawn"
+  | "closed";
+
+export interface ApplicationRow {
+  id: string;
+  job_id: string;
+  status: ApplicationStatus;
+  notes: string | null;
+  submitted_at: string | null;
+  tailored_resume_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  job_title: string | null;
+  job_company: string | null;
+  job_canonical_url: string | null;
+  job_is_active: boolean | null;
+  job_is_expired: boolean | null;
+  job_source: string | null;
+  allowed_transitions: ApplicationStatus[];
+}
+
+export interface ApplicationEventRow {
+  id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  occurred_at: string;
+  created_at: string | null;
+}
+
+export interface ApplicationsBoard {
+  items: ApplicationRow[];
+  counts: Record<string, number>;
+}
+
+export interface AvailabilityInfo {
+  outcome: "open" | "closed" | "unknown";
+  reason: string;
+}
+
 export interface Job {
   id: string;
   source: string;
