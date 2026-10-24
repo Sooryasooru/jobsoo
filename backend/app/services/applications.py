@@ -25,7 +25,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Application, ApplicationEvent, ApplicationStatus, Job, User
+from app.models import Application, ApplicationEvent, ApplicationStatus, Job, TailoredResume, User
 
 # Table of valid transitions: source -> set of allowed target statuses.
 # Adjusted from the initial proposal to keep the Phase 1 `prepared` (ready)
@@ -89,6 +89,26 @@ class AvailabilityOutcome(StrEnum):
     UNKNOWN = "unknown"
 
 
+def _validate_tailored_resume(
+    db: Session, user: User, job: Job, tailored_resume_id: str | None
+) -> str | None:
+    """Validate an optional tailored-resume reference before any DB changes.
+
+    - Unknown or malformed id -> not_found (never leaks existence).
+    - Another user's resume -> not_found.
+    - A resume tailored for a different job -> conflict.
+    """
+    if not tailored_resume_id:
+        return None
+    resume_uuid = _safe_id(tailored_resume_id)
+    row = db.get(TailoredResume, resume_uuid) if resume_uuid else None
+    if row is None or str(row.user_id) != str(user.id):
+        raise ApplicationError("not_found", "tailored resume not found")
+    if str(row.job_id) != str(job.id):
+        raise ApplicationError("conflict", "tailored resume is associated with a different job")
+    return str(row.id)
+
+
 def create_application(
     db: Session,
     user: User,
@@ -104,6 +124,9 @@ def create_application(
     job = db.get(Job, job_uuid) if job_uuid else None
     if job is None:
         raise ApplicationError("not_found", "job not found")
+    # Validation deliberately runs before the duplicate lookup so a repeated
+    # request can never bypass tailored-resume checks.
+    validated_resume_id = _validate_tailored_resume(db, user, job, tailored_resume_id)
     existing = (
         db.execute(
             select(Application)
@@ -120,7 +143,7 @@ def create_application(
             user_id=user.id,
             job_id=job.id,
             status=ApplicationStatus.QUEUED,
-            tailored_resume_id=tailored_resume_id,
+            tailored_resume_id=validated_resume_id,
         )
         db.add(app_row)
         db.flush()
