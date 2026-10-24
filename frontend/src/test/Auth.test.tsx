@@ -70,6 +70,43 @@ describe("Auth screen", () => {
     await waitFor(() => expect(auth.register).toHaveBeenCalled());
     expect(auth.register).toHaveBeenCalledWith("new@example.com", "valid-pass-123", "");
   });
+
+  it("shows the duplicate-email conflict message, not a network error", async () => {
+    auth.register.mockRejectedValue(
+      new ApiError(409, "an account with this email already exists"),
+    );
+    render(<Auth onAuthenticated={vi.fn()} />);
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Register" }));
+    await userEvent.setup().type(screen.getByLabelText("Email"), "dup@example.com");
+    await userEvent.setup().type(screen.getByLabelText("Password"), "valid-pass-123");
+    await userEvent.setup().click(screen.getByTestId("auth-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "an account with this email already exists",
+      ),
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent("network error");
+  });
+
+  it("shows the connectivity message only for genuine connection failures", async () => {
+    // fetch() itself rejected: backend down or CORS-blocked origin.
+    auth.register.mockRejectedValue(new TypeError("Failed to fetch"));
+    render(<Auth onAuthenticated={vi.fn()} />);
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Register" }));
+    await userEvent.setup().type(screen.getByLabelText("Email"), "down@example.com");
+    await userEvent.setup().type(screen.getByLabelText("Password"), "valid-pass-123");
+    await userEvent.setup().click(screen.getByTestId("auth-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "network error; is the backend running?",
+      ),
+    );
+    expect(getToken()).toBeNull();
+  });
 });
 
 describe("App session handling", () => {

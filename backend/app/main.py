@@ -47,12 +47,18 @@ app = FastAPI(
 
 # Local prototype: allow the Vite dev server origins. Auth uses bearer tokens
 # (see docs/security.md) - do not expose this instance publicly.
+# Vite falls back to the next free port (5174, 5175, ...) whenever 5173 is
+# already taken; a preflight from such an origin is rejected and the browser
+# surfaces it as a bare fetch failure ("network error; is the backend
+# running?"). Any loopback origin is local-only traffic, so accept any port
+# on localhost / 127.0.0.1 / [::1] - never a public origin.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],

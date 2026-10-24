@@ -49,8 +49,34 @@ export function setToken(token: string | null): void {
 
 export const SESSION_EXPIRED_EVENT = "jobsoo:session-expired";
 
+// FastAPI/Pydantic `detail` is a plain string for hand-raised errors but an
+// array of {loc, msg} objects for 422 validation errors. Flatten both into
+// one readable, user-safe line (no stack traces, no internals).
+function formatDetail(detail: unknown): string | null {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((issue) => {
+        if (!issue || typeof issue !== "object") return null;
+        const { loc, msg } = issue as { loc?: unknown; msg?: unknown };
+        const field = Array.isArray(loc)
+          ? loc.filter((p) => typeof p === "string").slice(1).join(" ")
+          : "";
+        const message = typeof msg === "string" ? msg : null;
+        if (!message) return null;
+        return field ? `${field}: ${message}` : message;
+      })
+      .filter((p): p is string => p !== null);
+    return parts.length ? parts.join("; ") : null;
+  }
+  return null;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
+  // A rejection here means fetch() itself failed - backend unreachable, DNS,
+  // or a CORS-blocked origin. It propagates unchanged so callers can show a
+  // genuine connectivity error distinct from HTTP-level API errors.
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
@@ -67,16 +93,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       setToken(null);
       window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
     }
-    let detail = response.statusText;
+    let detail = response.statusText || `HTTP ${response.status}`;
     try {
-      const body = (await response.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
+      const body = (await response.json()) as { detail?: unknown };
+      detail = formatDetail(body.detail) ?? detail;
     } catch {
       // non-JSON error body; keep statusText
     }
     throw new ApiError(response.status, detail);
   }
-  return (await response.json()) as T;
+  // Success: tolerate 204/empty bodies (logout) and non-JSON payloads, which
+  // must surface as a server-response error, never as a fake "network error".
+  const text = await response.text();
+  if (!text) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ApiError(502, "the server returned an unexpected response");
+  }
 }
 
 interface TokenPayload {

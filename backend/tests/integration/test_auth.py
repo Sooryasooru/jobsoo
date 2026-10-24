@@ -283,6 +283,42 @@ def test_unknown_email_login_performs_constant_work(
     assert len(hashed_seen) == 1  # exactly one verify on both failure paths
 
 
+def test_cors_allows_any_loopback_dev_port_and_blocks_public_origins(
+    api: TestClient,
+) -> None:
+    """Vite may serve on 5174+ when 5173 is taken; that origin must work.
+
+    A rejected preflight surfaces in the browser as a bare fetch failure
+    ("network error; is the backend running?"). Public origins must stay
+    rejected - loopback-only, never a wildcard.
+    """
+    anon = TestClient(app)
+    preflight_headers = {
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+    }
+
+    allowed = anon.options(
+        "/auth/register",
+        headers={"Origin": "http://localhost:5174", **preflight_headers},
+    )
+    assert allowed.status_code == 200
+    assert allowed.headers["access-control-allow-origin"] == "http://localhost:5174"
+
+    allowed_ip = anon.options(
+        "/auth/register",
+        headers={"Origin": "http://127.0.0.1:5175", **preflight_headers},
+    )
+    assert allowed_ip.status_code == 200
+
+    evil = anon.options(
+        "/auth/register",
+        headers={"Origin": "https://evil.example", **preflight_headers},
+    )
+    assert evil.status_code == 400  # Starlette: "Disallowed CORS origin"
+    assert "access-control-allow-origin" not in evil.headers
+
+
 def test_cross_user_cv_isolation(api: TestClient, db: Engine) -> None:
     owner = api_register(api, "owner@example.com")
     stranger = api_register(api, "stranger@example.com")
