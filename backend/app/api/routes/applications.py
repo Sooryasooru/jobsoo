@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.deps import CurrentAuthenticatedUser
 from app.db.session import get_session
 from app.models import Job
 from app.schemas.applications import (
@@ -29,7 +30,6 @@ from app.services.applications import (
     list_applications,
     update_status,
 )
-from app.services.users import get_or_create_dev_user
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -66,9 +66,8 @@ def _http_error(exc: ApplicationError) -> HTTPException:
 
 
 @router.get("")
-def list_all(db: Session = Depends(get_session)) -> dict[str, Any]:
+def list_all(user: CurrentAuthenticatedUser, db: Session = Depends(get_session)) -> dict[str, Any]:
     """Board data: applications with job info plus per-status counts."""
-    user = get_or_create_dev_user(db)
     return {
         "items": list_applications(db, user),
         "counts": application_counts(db, user),
@@ -76,9 +75,10 @@ def list_all(db: Session = Depends(get_session)) -> dict[str, Any]:
 
 
 @router.post("", status_code=201, response_model=ApplicationResponse)
-def create_app(payload: ApplicationCreate, db: Session = Depends(get_session)) -> Any:
+def create_app(
+    payload: ApplicationCreate, user: CurrentAuthenticatedUser, db: Session = Depends(get_session)
+) -> Any:
     """Prepare an application (get-or-create; duplicates are prevented)."""
-    user = get_or_create_dev_user(db)
     try:
         app_row = create_application(db, user, payload.job_id, payload.tailored_resume_id)
     except ApplicationError as exc:
@@ -88,9 +88,10 @@ def create_app(payload: ApplicationCreate, db: Session = Depends(get_session)) -
 
 
 @router.get("/{application_id}", response_model=ApplicationResponse)
-def get_one(application_id: str, db: Session = Depends(get_session)) -> Any:
+def get_one(
+    application_id: str, user: CurrentAuthenticatedUser, db: Session = Depends(get_session)
+) -> Any:
     """Application detail (ownership enforced)."""
-    user = get_or_create_dev_user(db)
     try:
         app_row = get_application(db, user, application_id)
     except ApplicationError as exc:
@@ -100,9 +101,10 @@ def get_one(application_id: str, db: Session = Depends(get_session)) -> Any:
 
 
 @router.get("/{application_id}/events", response_model=list[ApplicationEventResponse])
-def events(application_id: str, db: Session = Depends(get_session)) -> Any:
+def events(
+    application_id: str, user: CurrentAuthenticatedUser, db: Session = Depends(get_session)
+) -> Any:
     """Full event timeline for one application."""
-    user = get_or_create_dev_user(db)
     try:
         rows = list(get_event_rows(db, user, application_id))
     except ApplicationError as exc:
@@ -123,10 +125,10 @@ def events(application_id: str, db: Session = Depends(get_session)) -> Any:
 def change_status(
     application_id: str,
     body: ApplicationStatusUpdate,
+    user: CurrentAuthenticatedUser,
     db: Session = Depends(get_session),
 ) -> Any:
     """Validate and apply a server-side status transition."""
-    user = get_or_create_dev_user(db)
     try:
         app_row, _changed = update_status(db, user, application_id, body.status, body.notes)
     except ValueError as exc:
@@ -141,10 +143,10 @@ def change_status(
 def confirm_submit(
     application_id: str,
     body: ConfirmSubmissionRequest,
+    user: CurrentAuthenticatedUser,
     db: Session = Depends(get_session),
 ) -> Any:
     """Explicit "I applied" — the only path that marks an application submitted."""
-    user = get_or_create_dev_user(db)
     try:
         app_row, _changed = confirm_submitted(
             db, user, application_id, external_ref=body.external_ref, notes=body.notes
@@ -156,9 +158,10 @@ def confirm_submit(
 
 
 @router.get("/{application_id}/availability", response_model=AvailabilityResponse)
-def availability(application_id: str, db: Session = Depends(get_session)) -> Any:
+def availability(
+    application_id: str, user: CurrentAuthenticatedUser, db: Session = Depends(get_session)
+) -> Any:
     """Recheck the listing's availability (open/closed/unknown)."""
-    user = get_or_create_dev_user(db)
     try:
         app_row = get_application(db, user, application_id)
     except ApplicationError as exc:

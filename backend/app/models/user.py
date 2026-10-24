@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,17 +24,46 @@ from app.models.mixins import CreatedUpdatedAtMixin, str_uuid
 
 
 class User(Base, CreatedUpdatedAtMixin):
-    """Application user. Auth is deferred for the Phase 1 prototype."""
+    """Application user.
+
+    `password_hash` is an Argon2id hash (never plaintext). It is nullable so
+    that Phase 1 development rows (e.g. `dev@example.com`) keep loading; such
+    users simply cannot log in until they register again.
+    """
 
     __tablename__ = "users"
 
     id: Mapped[str] = str_uuid()
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     user_profile: Mapped[UserProfile | None] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
+    sessions: Mapped[list[UserSession]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class UserSession(Base, CreatedUpdatedAtMixin):
+    """Opaque bearer session token for a user.
+
+    Only the SHA-256 hash of the token is stored; the raw token exists solely
+    in the client. Sessions expire after a fixed lifetime and are deleted on
+    logout (single-token revocation scope).
+    """
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[str] = str_uuid()
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_user_sessions_user_id", "user_id"),)
+
+    user: Mapped[User] = relationship(back_populates="sessions")
 
 
 class UserProfile(Base, CreatedUpdatedAtMixin):

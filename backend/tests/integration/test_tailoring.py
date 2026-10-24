@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from app.db.session import set_engine, set_session_factory
 from app.main import app
 from app.models import Job, JobRequirement, Resume, User, UserProfile
 from app.services.tailoring import (
@@ -22,20 +22,15 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def api(db: Engine) -> TestClient:
-    set_engine(db)
-    set_session_factory(None)
-    return TestClient(app)
-
-
-@pytest.fixture
-def workflow_data(db: Engine) -> dict[str, str]:
-    """Persist a dev user, an original resume, and a job with requirements."""
+def workflow_data(db: Engine, api_user: str) -> dict[str, str]:
+    """Persist the API user, an original resume, and a job with requirements."""
     with Session(db) as session:
-        user = User(email="dev@example.com", display_name="Dev")
-        session.add(user)
-        session.flush()
-        session.add(UserProfile(user_id=user.id, skills=["Python", "SQL", "Docker"]))
+        user = session.execute(select(User).where(User.email == api_user)).scalar_one()
+        assert user is not None
+        if user.user_profile is None:
+            from app.models import UserSession  # noqa: F401  (keep models loaded)
+
+            session.add(UserProfile(user_id=user.id, skills=["Python", "SQL", "Docker"]))
         resume = Resume(
             user_id=user.id,
             kind="original",
@@ -222,3 +217,32 @@ def test_api_pdf_404_for_draft(api: TestClient, workflow_data) -> None:  # type:
     )
     tid = created.json()["id"]
     assert api.get(f"/tailored/{tid}/pdf").status_code == 404
+
+
+def test_pdf_and_tailored_isolation_for_foreign_user(
+    api: TestClient, workflow_data: dict[str, str]
+) -> None:
+    """A second account cannot read or download another user's tailored CV."""
+    tok = workflow_data
+    created = api.post(
+        f"/tailored?resume_id={tok['resume_id']}&job_id={tok['job_id']}&use_ai=false"
+    )
+    assert created.status_code == 201
+    tid = created.json()["id"]
+    assert api.post(f"/tailored/{tid}/approve").status_code == 200
+    # Owner can fetch the exported PDF (proves the file path is real).
+    assert api.get(f"/tailored/{tid}/pdf").status_code == 200
+
+    reg = TestClient(app).post(
+        "/auth/register",
+        json={"email": "pdf-stranger@example.com", "password": "stranger-pass-1"},
+    )
+    assert reg.status_code == 201
+    stranger = TestClient(app, headers={"Authorization": f"Bearer {reg.json()['token']}"})
+
+    # Listing empty, detail 404, and the file-serving route 404s too —
+    # no bytes of the owner's PDF leave the server.
+    assert stranger.get("/tailored").json() == []
+    assert stranger.get(f"/tailored/{tid}").status_code == 404
+    foreign_pdf = stranger.get(f"/tailored/{tid}/pdf")
+    assert foreign_pdf.status_code == 404

@@ -12,8 +12,6 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from app.db.session import set_engine, set_session_factory
-from app.main import app
 from app.models import (
     Application,
     ApplicationEvent,
@@ -51,14 +49,6 @@ def normalized(**overrides: object) -> NormalizedJob:
     }
     data.update(overrides)
     return NormalizedJob.model_validate(data)
-
-
-@pytest.fixture
-def api(db: Engine) -> TestClient:
-    """API client wired to the test database."""
-    set_engine(db)
-    set_session_factory(None)
-    return TestClient(app)
 
 
 @pytest.fixture
@@ -539,14 +529,13 @@ def test_status_flow_unchanged_with_tailored_resume(db: Engine, user: str, job: 
 
 
 def test_api_rejects_invalid_and_mismatched_tailored_resume(
-    api: TestClient, db: Engine, job: str
+    api: TestClient, db: Engine, job: str, api_user: str
 ) -> None:
     """Response codes through the API: 404 unknown/malformed, 409 mismatch."""
-    from app.services.users import get_or_create_dev_user
-
     with Session(db) as session:
-        dev_user = get_or_create_dev_user(session)
-        dev_user_id = str(dev_user.id)
+        owner = session.execute(select(User).where(User.email == api_user)).scalar_one()
+        assert owner is not None
+        owner_id = str(owner.id)
         run_ingestion(
             session,
             [
@@ -562,9 +551,9 @@ def test_api_rejects_invalid_and_mismatched_tailored_resume(
         rows = session.execute(select(Job)).scalars().all()
         assert len(rows) >= 2
         other_job = next(r for r in rows if str(r.id) != job)
-        resume = _original_resume(session, dev_user_id)
+        resume = _original_resume(session, owner_id)
         matching = TailoredResume(
-            user_id=dev_user_id,
+            user_id=owner_id,
             resume_id=resume.id,
             job_id=job,
             approval_status="approved",
@@ -572,7 +561,7 @@ def test_api_rejects_invalid_and_mismatched_tailored_resume(
             unsupported_claims=[],
         )
         mismatched = TailoredResume(
-            user_id=dev_user_id,
+            user_id=owner_id,
             resume_id=resume.id,
             job_id=other_job.id,
             approval_status="approved",

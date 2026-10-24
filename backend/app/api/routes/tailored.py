@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from app.api.deps import CurrentAuthenticatedUser
 from app.db.session import get_session
 from app.schemas.tailoring import TailoredContent
 from app.services.tailoring import (
@@ -21,7 +22,6 @@ from app.services.tailoring import (
     reject_tailored,
     submit_for_review,
 )
-from app.services.users import get_or_create_dev_user
 
 router = APIRouter(prefix="/tailored", tags=["tailored"])
 
@@ -47,11 +47,11 @@ def _payload(tailored: Any) -> dict[str, Any]:
 def create_draft(
     resume_id: str,
     job_id: str,
+    user: CurrentAuthenticatedUser,
     use_ai: bool = True,
     db: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Generate a validated tailored-CV draft for one (resume, job)."""
-    user = get_or_create_dev_user(db)
     try:
         draft = create_tailored_draft(db, user, resume_id, job_id, use_ai=use_ai)
     except TailoringError as exc:
@@ -60,14 +60,16 @@ def create_draft(
 
 
 @router.get("")
-def list_all(db: Session = Depends(get_session)) -> list[dict[str, Any]]:
-    user = get_or_create_dev_user(db)
+def list_all(
+    user: CurrentAuthenticatedUser, db: Session = Depends(get_session)
+) -> list[dict[str, Any]]:
     return [_payload(t) for t in list_tailored(db, user)]
 
 
 @router.get("/{tailored_id}")
-def get_one(tailored_id: str, db: Session = Depends(get_session)) -> dict[str, Any]:
-    user = get_or_create_dev_user(db)
+def get_one(
+    tailored_id: str, user: CurrentAuthenticatedUser, db: Session = Depends(get_session)
+) -> dict[str, Any]:
     try:
         tailored = get_tailored(db, user, tailored_id)
     except TailoringError as exc:
@@ -76,9 +78,10 @@ def get_one(tailored_id: str, db: Session = Depends(get_session)) -> dict[str, A
 
 
 @router.post("/{tailored_id}/submit")
-def submit(tailored_id: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+def submit(
+    tailored_id: str, user: CurrentAuthenticatedUser, db: Session = Depends(get_session)
+) -> dict[str, Any]:
     """Put a draft into review-state before the explicit approval step."""
-    user = get_or_create_dev_user(db)
     try:
         return _payload(submit_for_review(db, user, tailored_id))
     except TailoringError as exc:
@@ -86,9 +89,10 @@ def submit(tailored_id: str, db: Session = Depends(get_session)) -> dict[str, An
 
 
 @router.post("/{tailored_id}/approve")
-def approve(tailored_id: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+def approve(
+    tailored_id: str, user: CurrentAuthenticatedUser, db: Session = Depends(get_session)
+) -> dict[str, Any]:
     """Approve the draft; the PDF is generated only after approval."""
-    user = get_or_create_dev_user(db)
     try:
         return _payload(approve_tailored(db, user, tailored_id))
     except TailoringError as exc:
@@ -96,8 +100,9 @@ def approve(tailored_id: str, db: Session = Depends(get_session)) -> dict[str, A
 
 
 @router.post("/{tailored_id}/reject")
-def reject(tailored_id: str, db: Session = Depends(get_session)) -> dict[str, Any]:
-    user = get_or_create_dev_user(db)
+def reject(
+    tailored_id: str, user: CurrentAuthenticatedUser, db: Session = Depends(get_session)
+) -> dict[str, Any]:
     try:
         return _payload(reject_tailored(db, user, tailored_id))
     except TailoringError as exc:
@@ -105,9 +110,10 @@ def reject(tailored_id: str, db: Session = Depends(get_session)) -> dict[str, An
 
 
 @router.get("/{tailored_id}/pdf")
-def download_pdf(tailored_id: str, db: Session = Depends(get_session)) -> FileResponse:
+def download_pdf(
+    tailored_id: str, user: CurrentAuthenticatedUser, db: Session = Depends(get_session)
+) -> FileResponse:
     """Download the approved PDF; drafts have no PDF yet."""
-    user = get_or_create_dev_user(db)
     try:
         tailored = get_tailored(db, user, tailored_id)
     except TailoringError as exc:

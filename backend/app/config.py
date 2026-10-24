@@ -50,7 +50,6 @@ class Settings(BaseSettings):
 
     # Misc
     log_level: str = "INFO"
-    dev_user_email: str = "dev@example.com"
 
     @field_validator("log_level")
     @classmethod

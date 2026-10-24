@@ -6,10 +6,10 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from app.db.session import set_engine, set_session_factory
 from app.main import app
 from app.models import Job, JobRequirement, User, UserProfile
 from app.models.enums import Recommendation
@@ -80,13 +80,6 @@ PREFERRED_K8S = {
 EXP_ROW = {"category": "experience", "text": "5+ years backend", "min_years": 5.0}
 
 
-@pytest.fixture
-def api(db: Engine) -> TestClient:
-    set_engine(db)
-    set_session_factory(None)
-    return TestClient(app)
-
-
 def test_strong_match_when_skills_covered_and_experience_meets(
     db: Engine,
 ) -> None:
@@ -148,11 +141,11 @@ def test_upsert_match_is_idempotent(db: Engine) -> None:
         assert rows == 1
 
 
-def test_match_api_roundtrip(api: TestClient, db: Engine) -> None:
-    from app.services.users import get_or_create_dev_user
+def test_match_api_roundtrip(api: TestClient, db: Engine, api_user: str) -> None:
+    from app.models import User as UserModel
 
     with Session(db) as session:
-        user = get_or_create_dev_user(session)
+        user = session.execute(select(UserModel).where(UserModel.email == api_user)).scalar_one()
         profile = user.user_profile
         assert profile is not None
         profile.skills = ["Python", "SQL"]
@@ -185,3 +178,32 @@ def test_match_api_404_before_computation(api: TestClient, db: Engine) -> None:
         job_id = str(make_job(session, [REQUIRED_PY]).id)
 
     assert api.get(f"/jobs/{job_id}/match").status_code == 404
+
+
+def test_match_results_are_isolated_between_users(api: TestClient, db: Engine) -> None:
+    """A second account never sees another user's stored match rows."""
+    with Session(db) as session:
+        job_id = str(make_job(session, [REQUIRED_PY]).id)
+    assert api.post(f"/jobs/{job_id}/match").status_code == 200
+    owner_listing = api.get("/jobs/matches/all")
+    assert any(m["job_id"] == job_id for m in owner_listing.json())
+
+    # Register a second account through the real auth flow.
+    reg = TestClient(app).post(
+        "/auth/register",
+        json={"email": "match-stranger@example.com", "password": "stranger-pass-1"},
+    )
+    assert reg.status_code == 201
+    stranger = TestClient(app, headers={"Authorization": f"Bearer {reg.json()['token']}"})
+
+    # The stranger's listing is empty, and their per-job lookup 404s even
+    # though the owner has a computed match for that same (global) job.
+    assert stranger.get("/jobs/matches/all").json() == []
+    assert stranger.get(f"/jobs/{job_id}/match").status_code == 404
+
+    # The owner's data is untouched, and the stranger computing their own
+    # match (allowed: jobs are global) only creates THEIR row.
+    assert api.get(f"/jobs/{job_id}/match").status_code == 200
+    assert stranger.post(f"/jobs/{job_id}/match").status_code == 200
+    assert len(stranger.get("/jobs/matches/all").json()) == 1
+    assert len(api.get("/jobs/matches/all").json()) == 1

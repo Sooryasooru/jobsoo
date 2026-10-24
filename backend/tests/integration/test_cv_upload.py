@@ -6,12 +6,9 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
-from app.db.session import set_engine, set_session_factory
-from app.main import app
-
-pytestmark = pytest.mark.integration
+from app.models import User
 
 SAMPLE_MD = """# Dev Candidate
 
@@ -30,11 +27,11 @@ BSc Computer Science, Tech University, 2020
 
 
 @pytest.fixture
-def client(db: Engine) -> TestClient:
-    """API client wired to the test database."""
-    set_engine(db)
-    set_session_factory(None)
-    return TestClient(app)
+def client(_api_identity: dict[str, str]) -> TestClient:
+    """Authorized API client wired to the test database (per-test user)."""
+    from app.main import app
+
+    return TestClient(app, headers={"Authorization": f"Bearer {_api_identity['token']}"})
 
 
 def test_upload_md_cv_round_trip(client: TestClient) -> None:
@@ -65,17 +62,17 @@ def test_upload_validates_extension(client: TestClient) -> None:
 
 def test_upload_validates_size(db, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
     """Size limit is enforced by the service layer (no huge multipart needed)."""
-    from sqlalchemy.orm import Session
 
     from app.config import reset_settings_cache
     from app.services.resumes import CVUploadError, upload_resume
-    from app.services.users import get_or_create_dev_user
 
     monkeypatch.setenv("MAX_CV_UPLOAD_MB", "1")
     reset_settings_cache()
     try:
         with Session(db) as session:
-            user = get_or_create_dev_user(session)
+            user = User(email="size-test@example.com", display_name="Size Test")
+            session.add(user)
+            session.commit()
             with pytest.raises(CVUploadError, match="upload limit"):
                 upload_resume(session, user, "big.md", b"x" * (2 * 1024 * 1024))
     finally:
