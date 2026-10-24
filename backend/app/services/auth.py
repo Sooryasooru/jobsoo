@@ -22,11 +22,17 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from email_validator import EmailNotValidError, validate_email
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import User, UserProfile, UserSession
 
 _hasher = PasswordHasher()  # Argon2id defaults
+
+# Fixed-arg work item for logins against unknown accounts (or legacy rows with
+# no password): every failed login performs one full Argon2 verify so response
+# timing cannot distinguish "unknown email" from "wrong password".
+_DUMMY_HASH = _hasher.hash("jobsoo-dummy-verify-" + secrets.token_hex(8))
 
 SESSION_LIFETIME = timedelta(days=7)
 _TOKEN_BYTES = 32
@@ -128,7 +134,9 @@ def register_user(
     """Create a user and their first session; returns `(user, raw_token)`.
 
     Commits here: a registration must not leave a half-created user without a
-    way to authenticate (duplicate-email races fall back to AuthError 409).
+    way to authenticate. Raced duplicate registrations lose the unique-index
+    toss-up and raise the same AuthError("duplicate_email", 409) as the
+    upfront lookup (the loser rolls back, re-reads the winner, and 409s).
     """
     normalized = normalize_email(email)
     existing = session.execute(select(User).where(User.email == normalized)).scalar_one_or_none()
@@ -140,11 +148,21 @@ def register_user(
         display_name=display_name or normalized.split("@")[0],
         password_hash=password_hash,
     )
-    session.add(user)
-    session.flush()
-    session.add(UserProfile(user_id=user.id))
-    token = _create_session(session, user)
-    session.commit()
+    try:
+        session.add(user)
+        session.flush()
+        session.add(UserProfile(user_id=user.id))
+        token = _create_session(session, user)
+        session.commit()
+    except IntegrityError:
+        # A racing request committed this email first.
+        session.rollback()
+        winner = session.execute(select(User).where(User.email == normalized)).scalar_one_or_none()
+        if winner is None:  # not a duplicate-email race; surface the real error
+            raise
+        raise AuthError(
+            "duplicate_email", "an account with this email already exists", 409
+        ) from None
     return user, token
 
 
@@ -157,11 +175,14 @@ def authenticate(session: Session, *, email: str, password: str) -> tuple[User, 
 
     limiter.check(normalized)
     user = session.execute(select(User).where(User.email == normalized)).scalar_one_or_none()
-    if (
-        user is None
-        or user.password_hash is None
-        or not verify_password(user.password_hash, password)
-    ):
+    if user is None or user.password_hash is None:
+        # Constant-work failure path: the dummy verify keeps the response time
+        # of "unknown email" indistinguishable from "wrong password" and also
+        # covers legacy rows whose password_hash is NULL.
+        verify_password(_DUMMY_HASH, password)
+        limiter.record_failure(normalized)
+        raise AuthError("invalid_credentials", "invalid email or password", 401)
+    if not verify_password(user.password_hash, password):
         limiter.record_failure(normalized)
         raise AuthError("invalid_credentials", "invalid email or password", 401)
 

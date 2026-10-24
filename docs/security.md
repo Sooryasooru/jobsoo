@@ -108,6 +108,30 @@ following model is for a local/trusted-LAN deployment, not a public service
   `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`. No credentials live in the repository.
 - API keys are never sent to the browser; all LLM calls happen server-side.
 
+## Additional hardening (post-audit)
+
+- **Registration races:** lost duplicate-email races are caught at the
+  unique-index level; the loser rolls back and returns the same `409` as the
+  upfront lookup — a concurrent duplicate registration can never surface a
+  500 (`tests/integration/test_auth.py::test_raced_duplicate_registration_returns_409`).
+- **Login timing:** unknown accounts (and legacy rows with a NULL
+  `password_hash`) run one dummy full Argon2 verify before failing, so
+  response timing cannot distinguish "unknown email" from "wrong password"
+  (`test_unknown_email_login_performs_constant_work`).
+
+## Abuse surface (documented, not restricted in this prototype)
+
+- `POST /jobs/import` and `POST /jobs/ingest` are authenticated but not role
+  restricted: any signed-in user may inject global (shared) job listings via
+  the normalizing schema or trigger a connector fetch. The AI-backed
+  requirement-extraction route is similarly open to all users and spends the
+  server-owner's Anthropic credits. Acceptable for a single-user local
+  deployment; add an admin role or per-user quotas before any multi-user
+  or LAN-exposed deployment.
+- CORS is fixed to the Vite dev origins and the bearer-token model keeps the
+  API safe from CSRF; conversely, `localStorage` tokens remain the documented
+  XSS trade-off below.
+
 ## Not included (remaining limitations)
 
 - Registration is first-come; there is no invite/admin flow, email

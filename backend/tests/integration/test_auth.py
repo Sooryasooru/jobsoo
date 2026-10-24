@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
@@ -14,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.main import app
 from app.models import Job, Resume, TailoredResume, User, UserSession
 from app.schemas.jobs import NormalizedJob
+from app.services.auth import AuthError, verify_password
 from app.services.ingestion import run_ingestion
 from app.services.resumes import upload_resume
 
@@ -196,6 +199,88 @@ def test_bruteforce_login_lockout(api: TestClient) -> None:
     locked = api.post("/auth/login", json={"email": user["email"], "password": _CREDENTIAL})
     assert locked.status_code == 429
     limiter.reset(user["email"])
+
+
+def test_raced_duplicate_registration_returns_409(
+    api: TestClient, db: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Duplicate registration must never surface as a 500.
+
+    Simulates the race deterministically: a committed "winner" exists but the
+    loser's upfront lookup is made stale (misses once), so the loser proceeds
+    to the unique-index violation. The loser must roll back, re-read, and
+    raise the same 409 as the plain duplicate path — with no extra rows.
+    """
+    from app.services import auth
+
+    with Session(db) as session:
+        session.add(User(email="race@example.com", display_name="Winner", password_hash="$argon2x"))
+        session.commit()
+
+    # The auth service's sqlalchemy.select is not re-exported (mypy
+    # no_implicit_reexport frowns on `auth.select`), so grab the exact symbol
+    # we monkeypatch below via the module dict.
+    real_select: Any = auth.__dict__["select"]
+    missed = {"n": 0}
+
+    def stale_first_lookup(entity: Any) -> Any:
+        stmt = real_select(entity)
+        if missed["n"] == 0:
+            missed["n"] += 1
+            return stmt.where(sa.literal(False))
+        return stmt
+
+    monkeypatch.setattr(auth, "select", stale_first_lookup)
+
+    with Session(db) as session:
+        with pytest.raises(AuthError) as caught:
+            auth.register_user(session, email="race@example.com", password="loser-password-1")
+        assert caught.value.code == "duplicate_email"
+        assert caught.value.status == 409
+
+    # Exactly one user row, one profile, zero dangling sessions.
+    with Session(db) as session:
+        rows = session.execute(select(User).where(User.email == "race@example.com")).scalars().all()
+        assert len(rows) == 1
+        winner = rows[0]
+        assert winner.display_name == "Winner"  # loser did not overwrite anything
+        loser_sessions = (
+            session.execute(select(UserSession).where(UserSession.user_id == winner.id))
+            .scalars()
+            .all()
+        )
+        assert loser_sessions == []  # loser left no dangling session row
+
+
+def test_unknown_email_login_performs_constant_work(
+    api: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unknown emails run one dummy Argon2 verify, like the wrong-password path."""
+    from app.services import auth
+
+    real_verify = auth.verify_password
+    hashed_seen: list[str] = []
+
+    def spy(password_hash: str, password: str) -> bool:
+        hashed_seen.append(password_hash)
+        return real_verify(password_hash, password)
+
+    monkeypatch.setattr(auth, "verify_password", spy)
+    api_register(api, "known-timing@example.com", password="right-pass-1")
+
+    hashed_seen.clear()
+    unknown = api.post(
+        "/auth/login", json={"email": "ghost-timing@example.com", "password": "nope-nope-nope"}
+    )
+    assert unknown.status_code == 401 and len(hashed_seen) == 1
+    assert verify_password(hashed_seen[0], "nope-nope-nope") is False  # dummy verify runs
+
+    hashed_seen.clear()
+    known = api.post(
+        "/auth/login", json={"email": "known-timing@example.com", "password": "nope-nope-nope"}
+    )
+    assert known.status_code == 401
+    assert len(hashed_seen) == 1  # exactly one verify on both failure paths
 
 
 def test_cross_user_cv_isolation(api: TestClient, db: Engine) -> None:
