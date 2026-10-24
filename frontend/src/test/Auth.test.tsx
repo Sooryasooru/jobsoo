@@ -25,9 +25,23 @@ beforeEach(() => {
   auth.login.mockReset();
   auth.register.mockReset();
   auth.logout.mockReset();
+  // Isolation from the real backend: dashboard views (the default Matches
+  // tab) fire real api.get() calls through the actual request() client. With
+  // a local backend running, those requests 401 the fake test token and
+  // dispatch SESSION_EXPIRED_EVENT mid-test, racing (and preempting) the
+  // sign-out flow. Stubbing fetch to reject emulates CI's unreachable
+  // backend: connection-level failure only, never an HTTP 401, so no
+  // session-expired event can leak in from the developer's environment.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
+  );
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("Auth screen", () => {
   it("submits credentials via the login API and stores the token", async () => {
