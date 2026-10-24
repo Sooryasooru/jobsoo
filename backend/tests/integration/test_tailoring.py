@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from app.main import app
 from app.models import Job, JobRequirement, Resume, User, UserProfile
 from app.services.tailoring import (
     TailoringError,
@@ -216,3 +217,32 @@ def test_api_pdf_404_for_draft(api: TestClient, workflow_data) -> None:  # type:
     )
     tid = created.json()["id"]
     assert api.get(f"/tailored/{tid}/pdf").status_code == 404
+
+
+def test_pdf_and_tailored_isolation_for_foreign_user(
+    api: TestClient, workflow_data: dict[str, str]
+) -> None:
+    """A second account cannot read or download another user's tailored CV."""
+    tok = workflow_data
+    created = api.post(
+        f"/tailored?resume_id={tok['resume_id']}&job_id={tok['job_id']}&use_ai=false"
+    )
+    assert created.status_code == 201
+    tid = created.json()["id"]
+    assert api.post(f"/tailored/{tid}/approve").status_code == 200
+    # Owner can fetch the exported PDF (proves the file path is real).
+    assert api.get(f"/tailored/{tid}/pdf").status_code == 200
+
+    reg = TestClient(app).post(
+        "/auth/register",
+        json={"email": "pdf-stranger@example.com", "password": "stranger-pass-1"},
+    )
+    assert reg.status_code == 201
+    stranger = TestClient(app, headers={"Authorization": f"Bearer {reg.json()['token']}"})
+
+    # Listing empty, detail 404, and the file-serving route 404s too —
+    # no bytes of the owner's PDF leave the server.
+    assert stranger.get("/tailored").json() == []
+    assert stranger.get(f"/tailored/{tid}").status_code == 404
+    foreign_pdf = stranger.get(f"/tailored/{tid}/pdf")
+    assert foreign_pdf.status_code == 404
