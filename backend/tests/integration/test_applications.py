@@ -14,7 +14,15 @@ from sqlalchemy.orm import Session
 
 from app.db.session import set_engine, set_session_factory
 from app.main import app
-from app.models import Application, ApplicationEvent, Job, User, UserProfile
+from app.models import (
+    Application,
+    ApplicationEvent,
+    Job,
+    Resume,
+    TailoredResume,
+    User,
+    UserProfile,
+)
 from app.schemas.jobs import NormalizedJob
 from app.services.applications import (
     ApplicationError,
@@ -87,6 +95,40 @@ def _user(session: Session, user_id: str) -> User:
     found = session.get(User, user_id)
     assert found is not None
     return found
+
+
+def _original_resume(session: Session, user_id: str) -> Resume:
+    """Insert a minimal valid original CV and return it."""
+    row = Resume(
+        user_id=user_id,
+        original_filename="cv.pdf",
+        file_type="pdf",
+        file_size_bytes=64,
+        file_path="test-uploads/cv.pdf",
+        file_checksum_sha256="0" * 64,
+        parsed_content={"skills": ["Python"]},
+        parse_notes=[],
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def _tailored(db: Engine, user_id: str, job_id: str) -> str:
+    """Create an approved tailored resume for (user, job); return its id."""
+    with Session(db) as session:
+        resume = _original_resume(session, user_id)
+        tailored = TailoredResume(
+            user_id=user_id,
+            resume_id=resume.id,
+            job_id=job_id,
+            approval_status="approved",
+            content={"title": "Backend Engineer", "sections": []},
+            unsupported_claims=[],
+        )
+        session.add(tailored)
+        session.commit()
+        return str(tailored.id)
 
 
 def _app_id(db: Engine, user_id: str, job_id: str) -> str:
@@ -329,3 +371,240 @@ def test_api_board_and_timeline_shape(api: TestClient, job: str) -> None:
     foreign = api.get(f"/applications/{app_id}/availability")
     assert foreign.status_code == 200
     assert foreign.json()["outcome"] in ("open", "closed", "unknown")
+
+
+# --- Phase 2.2: assisted apply — tailored resume validation -------------------
+
+
+def test_create_with_matching_tailored_resume(db: Engine, user: str, job: str) -> None:
+    tailored_id = _tailored(db, user, job)
+    with Session(db) as session:
+        app_row = create_application(
+            session, _user(session, user), job, tailored_resume_id=tailored_id
+        )
+        assert str(app_row.tailored_resume_id) == tailored_id
+        assert app_row.status == "queued"
+    events = _events(db, str(app_row.id))
+    assert [e.event_type for e in events] == ["application_created"]
+
+
+def test_create_with_missing_or_malformed_resume_id(db: Engine, user: str, job: str) -> None:
+    for bad in (str(uuid.uuid4()), "not-a-uuid"):
+        with Session(db) as session:
+            with pytest.raises(ApplicationError) as exc:
+                create_application(session, _user(session, user), job, tailored_resume_id=bad)
+            assert exc.value.code == "not_found"
+    with Session(db) as session:
+        assert session.query(Application).count() == 0
+
+
+def test_create_with_foreign_resume_is_not_found(
+    db: Engine, user: str, other_user: str, job: str
+) -> None:
+    foreign_tailored = _tailored(db, other_user, job)
+    with Session(db) as session:
+        with pytest.raises(ApplicationError) as exc:
+            create_application(
+                session, _user(session, user), job, tailored_resume_id=foreign_tailored
+            )
+        assert exc.value.code == "not_found"  # existence of foreign rows is not leaked
+    with Session(db) as session:
+        assert session.query(Application).count() == 0
+
+
+def test_create_with_resume_for_different_job_is_conflict(db: Engine, user: str, job: str) -> None:
+    # A second job plus a tailored resume bound to that second job.
+    with Session(db) as session:
+        run_ingestion(
+            session,
+            [
+                normalized(
+                    source="linkedin",
+                    source_job_id="200",
+                    title="Senior Data Engineer",
+                    canonical_url="https://jobs.example.com/200",
+                    original_url="https://jobs.example.com/200",
+                )
+            ],
+        )
+        rows = session.execute(select(Job)).scalars().all()
+        assert len(rows) == 2
+        other_job = next(r for r in rows if str(r.id) != job)
+        resume = _original_resume(session, user)
+        tailored = TailoredResume(
+            user_id=user,
+            resume_id=resume.id,
+            job_id=other_job.id,
+            approval_status="approved",
+            content={"sections": []},
+            unsupported_claims=[],
+        )
+        session.add(tailored)
+        session.commit()
+        tailored_id = str(tailored.id)
+    with Session(db) as session:
+        with pytest.raises(ApplicationError) as exc:
+            create_application(session, _user(session, user), job, tailored_resume_id=tailored_id)
+        assert exc.value.code == "conflict"
+    with Session(db) as session:
+        assert session.query(Application).count() == 0
+
+
+def test_existing_application_does_not_bypass_resume_validation(
+    db: Engine, user: str, other_user: str, job: str
+) -> None:
+    other_tailored = _tailored(db, other_user, job)
+    with Session(db) as session:
+        app_row = create_application(session, _user(session, user), job)
+        app_id = str(app_row.id)
+        assert app_row.tailored_resume_id is None
+    # Repeated requests with an invalid resume must still be rejected.
+    bad_cases = [
+        (str(uuid.uuid4()), "not_found"),  # nonexistent resume
+        ("zzz", "not_found"),  # malformed resume id
+        (other_tailored, "not_found"),  # foreign resume for the same job
+    ]
+    for bad_id, expected_code in bad_cases:
+        with Session(db) as session:
+            with pytest.raises(ApplicationError) as exc:
+                create_application(session, _user(session, user), job, tailored_resume_id=bad_id)
+            assert exc.value.code == expected_code
+    # A resume bound to a different job is rejected even for an existing row.
+    with Session(db) as session:
+        run_ingestion(
+            session,
+            [
+                normalized(
+                    source="linkedin",
+                    source_job_id="200",
+                    title="Senior Data Engineer",
+                    canonical_url="https://jobs.example.com/200",
+                    original_url="https://jobs.example.com/200",
+                )
+            ],
+        )
+        resume = _original_resume(session, user)
+        other_job = session.execute(select(Job).where(Job.id != job)).scalars().first()
+        assert other_job is not None
+        tailored = TailoredResume(
+            user_id=user,
+            resume_id=resume.id,
+            job_id=other_job.id,
+            approval_status="approved",
+            content={"sections": []},
+            unsupported_claims=[],
+        )
+        session.add(tailored)
+        session.commit()
+        tailored_id = str(tailored.id)
+    with Session(db) as session:
+        with pytest.raises(ApplicationError) as exc:
+            create_application(session, _user(session, user), job, tailored_resume_id=tailored_id)
+        assert exc.value.code == "conflict"
+    with Session(db) as session:
+        row = session.get(Application, app_id)
+        assert row is not None
+        assert row.status == "queued"
+        assert row.tailored_resume_id is None
+    assert len(_events(db, app_id)) == 1  # no extra events from the rejected requests
+
+
+def test_duplicate_creation_remains_idempotent_with_resume(db: Engine, user: str, job: str) -> None:
+    tailored_id = _tailored(db, user, job)
+    with Session(db) as session:
+        first = create_application(
+            session, _user(session, user), job, tailored_resume_id=tailored_id
+        )
+        second = create_application(
+            session, _user(session, user), job, tailored_resume_id=tailored_id
+        )
+        assert str(first.id) == str(second.id)
+        assert session.query(Application).count() == 1
+    assert len(_events(db, str(first.id))) == 1
+
+
+def test_status_flow_unchanged_with_tailored_resume(db: Engine, user: str, job: str) -> None:
+    """Confirmed submission right still works when a resume was attached."""
+    tailored_id = _tailored(db, user, job)
+    with Session(db) as session:
+        app_row = create_application(
+            session, _user(session, user), job, tailored_resume_id=tailored_id
+        )
+        app_id = str(app_row.id)
+        _, changed = update_status(session, _user(session, user), app_id, "prepared")
+        assert changed is True
+        row, changed = confirm_submitted(session, _user(session, user), app_id)
+        assert changed is True and row.status == "submitted"
+    assert len(_events(db, app_id)) == 3
+
+
+def test_api_rejects_invalid_and_mismatched_tailored_resume(
+    api: TestClient, db: Engine, job: str
+) -> None:
+    """Response codes through the API: 404 unknown/malformed, 409 mismatch."""
+    from app.services.users import get_or_create_dev_user
+
+    with Session(db) as session:
+        dev_user = get_or_create_dev_user(session)
+        dev_user_id = str(dev_user.id)
+        run_ingestion(
+            session,
+            [
+                normalized(
+                    source="linkedin",
+                    source_job_id="300",
+                    title="Senior Data Engineer",
+                    canonical_url="https://jobs.example.com/300",
+                    original_url="https://jobs.example.com/300",
+                )
+            ],
+        )
+        rows = session.execute(select(Job)).scalars().all()
+        assert len(rows) >= 2
+        other_job = next(r for r in rows if str(r.id) != job)
+        resume = _original_resume(session, dev_user_id)
+        matching = TailoredResume(
+            user_id=dev_user_id,
+            resume_id=resume.id,
+            job_id=job,
+            approval_status="approved",
+            content={"sections": []},
+            unsupported_claims=[],
+        )
+        mismatched = TailoredResume(
+            user_id=dev_user_id,
+            resume_id=resume.id,
+            job_id=other_job.id,
+            approval_status="approved",
+            content={"sections": []},
+            unsupported_claims=[],
+        )
+        session.add_all([matching, mismatched])
+        session.commit()
+        matching_id = str(matching.id)
+        mismatched_id = str(mismatched.id)
+
+    assert (
+        api.post(
+            "/applications", json={"job_id": job, "tailored_resume_id": str(uuid.uuid4())}
+        ).status_code
+        == 404
+    )
+    assert (
+        api.post(
+            "/applications", json={"job_id": job, "tailored_resume_id": "not-a-uuid"}
+        ).status_code
+        == 404
+    )
+    resp = api.post("/applications", json={"job_id": job, "tailored_resume_id": mismatched_id})
+    assert resp.status_code == 409
+    assert "different job" in resp.json()["detail"]
+
+    ok = api.post("/applications", json={"job_id": job, "tailored_resume_id": matching_id})
+    assert ok.status_code == 201
+    assert ok.json()["tailored_resume_id"] == matching_id
+    assert ok.json()["status"] == "queued"
+
+    # Duplicate creation via the API stays idempotent.
+    again = api.post("/applications", json={"job_id": job, "tailored_resume_id": matching_id})
+    assert again.json()["id"] == ok.json()["id"]

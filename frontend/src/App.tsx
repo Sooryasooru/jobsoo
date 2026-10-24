@@ -1,15 +1,17 @@
 import { useState } from "react";
 import Applications from "./views/Applications";
+import AssistedApply from "./views/AssistedApply";
 import Matches from "./views/Matches";
 import Jobs from "./views/Jobs";
 import ProfileCv from "./views/ProfileCv";
 import Tailored from "./views/Tailored";
 
-type Tab = "matches" | "jobs" | "profile" | "tailored" | "applications";
+type Tab = "matches" | "jobs" | "profile" | "tailored" | "applications" | "assisted-apply";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "matches", label: "Matches" },
   { id: "jobs", label: "Jobs" },
+  { id: "assisted-apply", label: "Assisted Apply" },
   { id: "applications", label: "Applications" },
   { id: "profile", label: "CV & Profile" },
   { id: "tailored", label: "Tailored CV" },
@@ -47,6 +49,9 @@ export default function App() {
       <main>
         {tab === "matches" && <Matches onOpenJob={(id) => { setSelectedJobId(id); setTab("jobs"); }} />}
         {tab === "jobs" && <Jobs selectedJobId={selectedJobId} onSelectJob={setSelectedJobId} />}
+        {tab === "assisted-apply" && (
+          <AssistedApply onNavigate={(target) => setTab(target as Tab)} />
+        )}
         {tab === "applications" && <Applications />}
         {tab === "profile" && <ProfileCv sourceCvId={sourceCvId} onSelectCv={setSourceCvId} />}
         {tab === "tailored" && <Tailored sourceCvId={sourceCvId} />}
