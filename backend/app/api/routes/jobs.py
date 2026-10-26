@@ -24,6 +24,21 @@ from app.services.ingestion import ingest_many, run_ingestion
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
+def _job_or_404(db: Session, job_id: str) -> Job:
+    """Load a job by id; a malformed id is indistinguishable from a missing one.
+
+    Without this, a non-UUID path parameter reaches Postgres as
+    `invalid input syntax for type uuid` and surfaces as a 500.
+    """
+    try:
+        job = db.get(Job, job_id)
+    except (DataError, StatementError):
+        raise HTTPException(status_code=404, detail="job not found") from None
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
+
+
 def _match_to_payload(match: JobMatch) -> dict[str, Any]:
     """Serialize a stored JobMatch row for the API."""
     return {
@@ -136,13 +151,7 @@ def source_stats(db: Session = Depends(get_session)) -> IngestionSourceStats:
 @router.get("/{job_id}")
 def get_job(job_id: str, db: Session = Depends(get_session)) -> JobListingResponse:
     """Fetch one job by id."""
-    try:
-        job = db.get(Job, job_id)
-    except (DataError, StatementError):
-        raise HTTPException(status_code=404, detail="job not found") from None
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
-    return _to_response(job)
+    return _to_response(_job_or_404(db, job_id))
 
 
 @router.post("/ingest")
@@ -171,9 +180,7 @@ def extract_requirements(
     from app.ai.requirements import extract_requirements_for_job
     from app.scoring.evidence import build_evidence_report
 
-    job = db.get(Job, job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
+    job = _job_or_404(db, job_id)
     try:
         extraction, from_cache = extract_requirements_for_job(db, job, force=force)
     except ValueError as exc:
@@ -192,9 +199,7 @@ def extract_requirements(
 @router.get("/{job_id}/requirements")
 def list_requirements(job_id: str, db: Session = Depends(get_session)) -> list[dict[str, Any]]:
     """List stored requirement rows for a job."""
-    job = db.get(Job, job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
+    job = _job_or_404(db, job_id)
     return [
         {
             "id": str(req.id),
@@ -216,9 +221,7 @@ def map_evidence(
     """Match a job's stored requirements against the candidate profile."""
     from app.ai.requirements import _payload_from_rows
 
-    job = db.get(Job, job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
+    job = _job_or_404(db, job_id)
     if not job.requirements:
         raise HTTPException(status_code=400, detail="extract requirements first")
     payload = _payload_from_rows(job, job.requirements)
@@ -233,9 +236,7 @@ def compute_match(
 ) -> dict[str, Any]:
     """Compute (or recompute) the deterministic match score for a job."""
 
-    job = db.get(Job, job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
+    job = _job_or_404(db, job_id)
     match = upsert_match(db, user, job)
     return _match_to_payload(match)
 
@@ -249,9 +250,7 @@ def get_match(
 
     from app.models import JobMatch
 
-    job = db.get(Job, job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
+    job = _job_or_404(db, job_id)
     match = db.execute(
         select(JobMatch).where(JobMatch.user_id == user.id, JobMatch.job_id == job.id)
     ).scalar_one_or_none()

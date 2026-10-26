@@ -50,7 +50,14 @@ def engine(db_url: str) -> Engine:
 @pytest.fixture
 def db(engine: Engine) -> Generator[Engine, None, None]:
     """Provide an engine after resetting all tables for isolation."""
+    from importlib import import_module
+
     from app.db.base import Base
+
+    # Register every model on Base.metadata before create_all: without this,
+    # the first test of a module that does not import app.models itself would
+    # create zero tables and fail with "relation does not exist".
+    import_module("app.models")
 
     with engine.connect() as conn:
         conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))

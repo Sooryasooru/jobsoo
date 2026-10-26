@@ -5,6 +5,7 @@ from __future__ import annotations
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select
+from sqlalchemy.exc import DataError, StatementError
 from sqlalchemy.orm import Session
 
 from app.api.deps import CurrentAuthenticatedUser
@@ -73,7 +74,9 @@ def get_cv(
     """Fetch one CV's parsed content by id."""
     try:
         resume = db.get(Resume, resume_id)
-    except (ValueError, TypeError):
+    except (DataError, StatementError, ValueError, TypeError):
+        # A malformed id raises a DBAPI DataError, not ValueError: catch both
+        # so a bad path parameter returns 404 instead of an unhandled 500.
         raise HTTPException(status_code=404, detail="cv not found") from None
     if resume is None or resume.user_id != user.id:
         raise HTTPException(status_code=404, detail="cv not found")

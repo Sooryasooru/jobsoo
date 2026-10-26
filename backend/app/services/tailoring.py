@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 import structlog
 from sqlalchemy import select
@@ -26,8 +27,22 @@ class TailoringError(ValueError):
     """User-safe error for tailoring workflow violations."""
 
 
+def _safe_id(value: str) -> str | None:
+    """Return the value unchanged when it is a valid UUID, else None.
+
+    Keeps malformed ids from reaching Postgres as
+    `invalid input syntax for type uuid` (an unhandled 500).
+    """
+    try:
+        UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return str(value)
+
+
 def _get_owned(session: Session, model: type, row_id: str, user: User) -> Any:
-    row = session.get(model, row_id)
+    safe_id = _safe_id(row_id)
+    row = session.get(model, safe_id) if safe_id else None
     if row is None:
         raise TailoringError(f"{model.__name__} not found")
     # Ownership applies only to per-user models; jobs are shared listings.
@@ -94,7 +109,8 @@ def list_tailored(session: Session, user: User) -> list[TailoredResume]:
 
 
 def get_tailored(session: Session, user: User, tailored_id: str) -> TailoredResume:
-    tailored = session.get(TailoredResume, tailored_id)
+    safe_id = _safe_id(tailored_id)
+    tailored = session.get(TailoredResume, safe_id) if safe_id else None
     if tailored is None or tailored.user_id != user.id:
         raise TailoringError("tailored resume not found")
     return tailored
